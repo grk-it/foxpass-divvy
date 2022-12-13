@@ -5,7 +5,7 @@ const path = require('path');
 
 const Utils = require('./utils');
 const Constants = require('./constants');
-const ZooKeeper = require('zookeeper');
+const zookeeper = require('node-zookeeper-client');
 
 
 /**
@@ -48,14 +48,56 @@ class Config {
   }
 
   createClient(timeoutMs = 5000) {
-    const config = {
-        connect: "host.docker.internal:2199",
-        timeout: timeoutMs,
-        debug_level: ZooKeeper.ZOO_LOG_LEVEL_WARN,
-        host_order_deterministic: false,
-    };
+    var client = zookeeper.createClient('host.docker.internal:2199');
+    var path = '/workers/worker';
+    client.once('connected', function () {
+        console.log('Connected to the server.');
 
-    return new ZooKeeper(config);
+        client.mkdirp(path, zookeeper.CreateMode.PERSISTENT, function (error, p) {
+            if (error) {
+                console.log('Failed to mkdirp: %s due to: %s: ', path, error.stack);
+            } else {
+                console.log('Path: %s is successfully created.', p);
+            }
+        });
+
+        client.create(path, function (error) {
+            if (error) {
+                console.log('Failed to create node: %s due to: %s.', path, error);
+            } else {
+                console.log('Node: %s is successfully created.', path);
+            }
+
+            //client.close();
+        });
+
+        client.mkdirp("/workers/work/grk", zookeeper.CreateMode.PERSISTENT, function (error, p) {
+            if (error) {
+                console.log('Failed to mkdirp: %s due to: %s: ', path, error.stack);
+            } else {
+                console.log('Path: %s is successfully created.', p);
+            }
+        });
+
+    });
+
+    client.connect();
+
+    /*client.create(
+        '/test/demo',
+        Buffer.from('data'),
+        CreateMode.EPHEMERAL,
+        function (error, path) {
+            if (error) {
+                console.log(error.stack);
+                return;
+            }
+
+            console.log('Node: %s is created.', path);
+        }
+    );*/
+
+    return client
   }
 
   static fromJsonFile(filename) {
@@ -100,37 +142,59 @@ class Config {
     }
   }
 
-  async createNode(client) {
-    const data = 'hello'
-    console.log("here in createNode!!!!" +  Date.now())
-    const createdPath = await client.create("/test70/worker/message/msg", data, ZooKeeper.ZOO_PERSISTENT).catch(error => console.log("wtf" + error.message));
+  async getData(client, config) {
+    const path = '/workers/work/grk';
+    const data = Buffer.from('hello')
+    client.getData(
+        path,
+        function (event) {
+            console.log('Got event: %s', event);
+            config.getData(client, config);
+        },
+        function (error, data, stat) {
+            if (error) {
+                console.log('Error occurred when getting data: %s.', error);
+                return;
+            }
+
+            console.log(
+                'Node: %s has data: %s, version: %d',
+                path,
+                data ? data.toString() : undefined,
+                stat.version
+            );
+        }
+    );
   }
 
   async createPath(client, config) {
-    const path = '/workers/worker';
-    const data = ''
+    const path = '/workers/work/grk';
+    const data = Buffer.from('hello_mr_grk')
     try {
-      console.log("trying to createeeeeeeeeeeee path!")
-      console.log(ZooKeeper.ZOO_EPHEMERAL)
-      console.log(ZooKeeper.ZOO_SEQUENCE)
+        client.create(path, function (error) {
+            if (error) {
+                console.log('Failed to create node: %s due to: %s.', path, error);
+            } else {
+                console.log('Node: %s is successfully created.', path);
+            }
+        });
 
-      const promises = [];
+        console.log("trying to set data on the path")
 
-      const message_func = function(error) {
-          if (error != null) {
-            console.log(error)
-            console.log("error creating the path");
-          } else {
-            console.log("no error!!!!!!!! after creating path")
-            //const data = 'hello'
-            //const createdPath = client.create("/mandy118/worker/message/msg", data, ZooKeeper.ZOO_PERSISTENT).catch(error => console.log("wtf" + error.message));
-          }
-      }
+        client.setData(path, data, function (error, stat) {
+            if (error) {
+              console.log('Got error when setting data: ' + error);
+              return;
+            }
 
-      const mkdirPath = await client.mkdirp("/test70/worker/message", message_func);
-      const stat = await client.exists('/test70/worker/message', false)
-      //const mkdirPath = await client.create("/test70/worker/message/msg", '', ZooKeeper.ZOO_EPHEMERAL | ZooKeeper.ZOO_SEQUENCE);
-      const mkNode = await config.createNode(client);
+            console.log(
+              'Set data "%s" on node %s, version: %d.',
+              data.toString(),
+              path,
+              stat.version
+            );
+
+        });
 
     } catch (error) {
       console.log(error)
@@ -144,27 +208,8 @@ class Config {
     const rawConfig = ini.parse(fs.readFileSync(filename, 'utf-8'));
     const config = new Config();
     config.zookeeperClient = config.createClient();
-    config.zookeeperClient.init({
-        connect: "host.docker.internal:2199",
-        timeout: 5000,
-        debug_level: ZooKeeper.ZOO_LOG_LEVEL_DEBUG,
-        host_order_deterministic: false,
-    })
-
-/*
-    config.zookeeperClient.on('connect', () => {
-        console.log("connected to zookeeper");
-        config.createPath(config.zookeeperClient);
-    });
-*/
-    config.createPath(config.zookeeperClient, config);/*.then(
-          function(value) {
-            console.log("create path successful " + Date.now());
-            config.createNode(config.zookeeperClient);
-          }
-    );*/
-
-    //config.createNode(config.zookeeperClient);
+    config.createPath(config.zookeeperClient, config);
+    config.getData(config.zookeeperClient, config);
 
 
     for (const rulegroupString of Object.keys(rawConfig)) {
