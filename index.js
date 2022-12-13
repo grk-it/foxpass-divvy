@@ -16,8 +16,8 @@ if (!configFile) {
 }
 
 const config = Config.fromFile(configFile);
-const redisPort = parseInt(process.env.REDIS_PORT, 10) || 6379;
-const redisHost = process.env.REDIS_HOST || 'localhost';
+const redisPort = 6379;
+const redisHost = 'host.docker.internal';
 const redisClient = redis.createClient(redisPort, redisHost);
 const backend = new Backend({ redisClient });
 

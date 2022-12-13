@@ -38,6 +38,7 @@ class Server extends EventEmitter {
 
     this.backend = options.backend;
     this.config = options.config;
+    //this.config.get_alerts()
     this.instrumenter = options.instrumenter;
 
     this.port = (options.port !== undefined) ? options.port : DEFAULT_PORT;
@@ -152,7 +153,9 @@ class Server extends EventEmitter {
   }
 
   async handleHit(operation, startDate) {
+    console.log("async handle hit!")
     const rules = this.config.findRules(operation);
+    this.config.get_alert()
     const status = await this.evaluateRules(rules, operation);
     this.instrumenter.timeHit(startDate);
 

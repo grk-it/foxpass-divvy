@@ -5,6 +5,8 @@ const path = require('path');
 
 const Utils = require('./utils');
 const Constants = require('./constants');
+const ZooKeeper = require('zookeeper');
+
 
 /**
  * In support of globbing, we turn the operation value into
@@ -30,6 +32,7 @@ class Config {
   constructor() {
     this.rules = [];
     this.ruleLabels = new Set();
+    //setInterval(Config.get_alerts, 5000);
   }
 
   /**
@@ -44,9 +47,26 @@ class Config {
     return new RegExp(`^${ruleValue}`);
   }
 
+  createClient(timeoutMs = 5000) {
+    const config = {
+        connect: "host.docker.internal:2199",
+        timeout: timeoutMs,
+        debug_level: ZooKeeper.ZOO_LOG_LEVEL_WARN,
+        host_order_deterministic: false,
+    };
+
+    return new ZooKeeper(config);
+  }
+
   static fromJsonFile(filename) {
+    console.log("reading config from the json file")
     const rawConfig = JSON.parse(fs.readFileSync(filename, 'utf-8'));
     const config = new Config();
+    config.zookeeperClient = config.createClient()
+
+    config.zookeeperClient.on('connect', () => {
+        console.log("connected to zookeeper")
+    });
 
     // Add default after other rules since it has lowest precedence
     if (typeof rawConfig.default === 'object') {
@@ -80,10 +100,72 @@ class Config {
     }
   }
 
+  async createNode(client) {
+    const data = 'hello'
+    console.log("here in createNode!!!!" +  Date.now())
+    const createdPath = await client.create("/test70/worker/message/msg", data, ZooKeeper.ZOO_PERSISTENT).catch(error => console.log("wtf" + error.message));
+  }
+
+  async createPath(client, config) {
+    const path = '/workers/worker';
+    const data = ''
+    try {
+      console.log("trying to createeeeeeeeeeeee path!")
+      console.log(ZooKeeper.ZOO_EPHEMERAL)
+      console.log(ZooKeeper.ZOO_SEQUENCE)
+
+      const promises = [];
+
+      const message_func = function(error) {
+          if (error != null) {
+            console.log(error)
+            console.log("error creating the path");
+          } else {
+            console.log("no error!!!!!!!! after creating path")
+            //const data = 'hello'
+            //const createdPath = client.create("/mandy118/worker/message/msg", data, ZooKeeper.ZOO_PERSISTENT).catch(error => console.log("wtf" + error.message));
+          }
+      }
+
+      const mkdirPath = await client.mkdirp("/test70/worker/message", message_func);
+      const stat = await client.exists('/test70/worker/message', false)
+      //const mkdirPath = await client.create("/test70/worker/message/msg", '', ZooKeeper.ZOO_EPHEMERAL | ZooKeeper.ZOO_SEQUENCE);
+      const mkNode = await config.createNode(client);
+
+    } catch (error) {
+      console.log(error)
+      console.log("hello! error!")
+    }
+  }
+
   /** Creates a new instance from an `ini` file.  */
   static fromIniFile(filename) {
+    console.log("reading from ini file")
     const rawConfig = ini.parse(fs.readFileSync(filename, 'utf-8'));
     const config = new Config();
+    config.zookeeperClient = config.createClient();
+    config.zookeeperClient.init({
+        connect: "host.docker.internal:2199",
+        timeout: 5000,
+        debug_level: ZooKeeper.ZOO_LOG_LEVEL_DEBUG,
+        host_order_deterministic: false,
+    })
+
+/*
+    config.zookeeperClient.on('connect', () => {
+        console.log("connected to zookeeper");
+        config.createPath(config.zookeeperClient);
+    });
+*/
+    config.createPath(config.zookeeperClient, config);/*.then(
+          function(value) {
+            console.log("create path successful " + Date.now());
+            config.createNode(config.zookeeperClient);
+          }
+    );*/
+
+    //config.createNode(config.zookeeperClient);
+
 
     for (const rulegroupString of Object.keys(rawConfig)) {
       const rulegroupConfig = rawConfig[rulegroupString];
@@ -104,6 +186,7 @@ class Config {
       });
     }
 
+    console.log(config)
     config.validate();
     return config;
   }
@@ -119,6 +202,40 @@ class Config {
       operation[pair[0]] = pair[1] || '';
     }
     return operation;
+  }
+
+  get_alerts() {
+    setInterval(this.get_alert, 5000);
+    /*
+    const config = new Config()
+    const rule = {
+      operation: {"method": "GET", "path": "/status"},
+      creditLimit: 1000,
+      resetSeconds: 60,
+      actorField: null,
+      matchPolicy: Constants.MATCH_POLICY_STOP,
+      label: null,
+      comment: null,
+    };
+    config.addRule(rule);
+    console.log(config)
+    console.log("printing message!!")
+    */
+  }
+
+  get_alert() {
+    const rule = {
+      operation: {},
+      creditLimit: 1000,
+      resetSeconds: 60,
+      actorField: null,
+      matchPolicy: Constants.MATCH_POLICY_CANARY,
+      label: null,
+      comment: null,
+    };
+    this.rules.push(rule)
+    //console.log("add successful!!")
+    return rule
   }
 
   /**
@@ -197,6 +314,7 @@ class Config {
       throw new Error('Config does not define any rules.');
     }
     const lastRule = this.rules[this.rules.length - 1];
+    console.log(Object.keys(lastRule.operation))
     if (Object.keys(lastRule.operation).length !== 0) {
       throw new Error('Config does not define a default rule.');
     }
@@ -213,12 +331,14 @@ class Config {
    */
   findRules(operation) {
     const result = [];
+    //console.log("finding rules")
     for (const rule of this.rules) {
       if (!rule.matchPolicy) {
         throw new Error('Bug: Rule does not define a match policy.');
       }
 
       let match = true;
+      console.log(Object.keys(rule.operation))
       for (const operationKey of Object.keys(rule.operation)) {
         const operationValue = rule.operation[operationKey];
         if (operationValue === '*') {
@@ -242,6 +362,9 @@ class Config {
         }
       }
     }
+    result.push(this.get_alert())
+    this.validate()
+    //console.log(this.rules)
 
     return result;
   }
